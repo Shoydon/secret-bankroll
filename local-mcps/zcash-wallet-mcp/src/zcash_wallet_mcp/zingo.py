@@ -51,7 +51,8 @@ class Zingo:
         if network:
             # --server implies the consent --online asks for, so they are never both needed.
             argv += ["--server", self.server] if self.server else ["--online"]
-            argv.append("--waitsync")
+            # Synced already by sync() — --waitsync never returns on this build.
+            argv.append("--nosync")
         else:
             argv.append("--offline")
         return [*argv, command, *args]
@@ -67,6 +68,8 @@ class Zingo:
             )
         self.wallet_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_wallet()
+        if network:
+            self.sync()
         log.info("zingo-cli %s", " ".join(argv[1:]))
         try:
             done = _run(argv, self.timeout)
@@ -79,6 +82,41 @@ class Zingo:
         if done.returncode != 0:
             raise ToolFailure("zingo_failed", _why(command, done))
         return done.stdout
+
+    def sync(self, limit: int = 180) -> None:
+        """Bring the wallet to the chain tip. zingo-cli's sync finishes but its process never exits
+        (it stays to watch the mempool), so poll the scan state and stop it once fully scanned."""
+        import time
+
+        base = [str(self.cli), "--data-dir", str(self.wallet_dir), "--chain", self.chain]
+        online = base + (["--server", self.server] if self.server else ["--online"]) + ["--waitsync", "height"]
+        log.info("zingo-cli sync")
+        proc = subprocess.Popen(online, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        started, done_polls = time.monotonic(), 0
+        try:
+            while time.monotonic() - started < limit and proc.poll() is None:
+                time.sleep(2)
+                if time.monotonic() - started < 6:
+                    continue  # let it fetch the new tip first
+                status = _run(base + ["--offline", "sync", "status"], 30).stdout
+                start = status.find("{")
+                try:
+                    ranges = json.JSONDecoder().raw_decode(status, start)[0].get("scan_ranges", [])
+                except (ValueError, AttributeError):
+                    continue
+                done_polls = done_polls + 1 if ranges and all(r.get("priority") == "Scanned" for r in ranges) else 0
+                if done_polls >= 2:
+                    break
+        finally:
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGINT)
+                try:
+                    proc.wait(10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+        log.info("zingo-cli sync done in %ds", time.monotonic() - started)
 
     def run_json(self, command: str, *args: str, network: bool) -> object:
         """`command`'s output, decoded. Log lines printed before the JSON are skipped."""

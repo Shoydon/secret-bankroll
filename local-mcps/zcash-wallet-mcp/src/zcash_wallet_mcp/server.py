@@ -14,6 +14,7 @@ from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from . import desk
 from .amounts import to_zatoshis, zec
 from .auth import BearerAuthMiddleware
 from .config import get_settings
@@ -277,6 +278,71 @@ def send_zcash(to: ToAddress, amount_zec: AmountZec, memo: Memo = None) -> CallT
     return _result("\n".join(parts))
 
 
+SwapAmount = Annotated[
+    str,
+    Field(description='ZEC to swap as a decimal string, or "all" for the whole balance minus the network fee'),
+]
+EvmAddress = Annotated[str, Field(description="The EVM address (0x…) on Base Sepolia to receive the USDC")]
+
+
+@mcp.tool(
+    description=(
+        "Testnet only: swap ZEC from this wallet for USDC on Base Sepolia at the desk's fixed rate. "
+        "Pass amount \"all\" to swap everything; the network fee is taken out automatically. "
+        "Sends the ZEC to the swap desk, then the desk pays USDC to evm_address. "
+        "Spends the user's ZEC: confirm the amount first. Takes a few minutes."
+    ),
+    annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False),
+)
+@tool_handler("swap_zec_to_usdc")
+def swap_zec_to_usdc(amount_zec: SwapAmount, evm_address: EvmAddress) -> CallToolResult:
+    settings = get_settings()
+    if settings.zingo_chain == "mainnet":
+        raise ToolFailure("testnet_only", "the swap desk only runs on testnet")
+    if not settings.desk_zec_address:
+        raise ToolFailure("desk_not_configured", "set DESK_ZEC_ADDRESS in the server's .env")
+    from web3 import Web3
+
+    if not Web3.is_address(evm_address.strip()):
+        raise ToolFailure("invalid_address", f"{evm_address} is not an EVM address")
+
+    cli = _cli()
+    most = cli.run_json("max_send_value", settings.desk_zec_address, network=False)
+    most = int(most["max_send_value"]) if isinstance(most, dict) and "max_send_value" in most else None
+    if amount_zec.strip().lower() in ("all", "max"):
+        if not most:
+            raise ToolFailure("nothing_to_send", "the wallet has nothing it can send after the fee")
+        zatoshis = most
+    else:
+        zatoshis = to_zatoshis(amount_zec)
+        if most is not None and zatoshis > most:
+            zatoshis = most  # leave room for the network fee
+    if zatoshis <= 0:
+        raise ToolFailure("nothing_to_send", "the wallet has nothing it can send after the fee")
+    cap = to_zatoshis(settings.max_send_zec)
+    if zatoshis > cap:
+        raise ToolFailure("over_send_limit", f"{zec(zatoshis)} ZEC is over the {zec(cap)} ZEC limit for one send")
+    units = desk.usdc_units(settings, zatoshis)
+    desk.check_liquidity(settings, units)
+
+    sent = _cli().run_json("quicksend", settings.desk_zec_address, str(zatoshis), "swap", network=True)
+    txids = sent.get("txids") if isinstance(sent, dict) else None
+    if not txids:
+        raise ToolFailure("send_not_confirmed", "zingo-cli reported no transaction id; no USDC was paid")
+
+    try:
+        usdc_tx = desk.pay_usdc(settings, evm_address.strip(), units)
+    except Exception as e:
+        raise ToolFailure(
+            "usdc_payout_failed", f"ZEC sent (tx {', '.join(txids)}) but the USDC payout failed: {e}"
+        ) from e
+    return _result(
+        f"Swapped {zec(zatoshis)} ZEC for {units / 1e6} USDC at {settings.desk_usdc_per_zec} USDC/ZEC.\n"
+        f"ZEC tx: {', '.join(txids)}\n"
+        f"USDC tx (Base Sepolia): https://sepolia.basescan.org/tx/{usdc_tx}"
+    )
+
+
 # ---------------------------------------------------------------------- transport
 
 
@@ -289,7 +355,7 @@ def build_http_app():
     settings = get_settings()
     if not settings.mcp_auth_token:
         raise SystemExit("MCP_AUTH_TOKEN is required for the http transport")
-    app = mcp.streamable_http_app(host=settings.mcp_host)
+    app = mcp.streamable_http_app(host="0.0.0.0")  # tunnel Host headers allowed; bearer token still gates
     return BearerAuthMiddleware(app, settings.mcp_auth_token)
 
 

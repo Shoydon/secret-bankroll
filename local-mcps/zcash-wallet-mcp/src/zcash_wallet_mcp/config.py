@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # The most one send_zcash call may move. The agent decides what to send, so this is the stop.
     max_send_zec: Decimal = Decimal("1")
 
+    # Testnet swap desk: ZEC goes to desk_zec_address, the desk pays USDC on Base Sepolia.
+    desk_zec_address: str | None = None
+    desk_evm_key_file: Path = Path("./data/desk/evm.key")
+    desk_usdc_per_zec: Decimal = Decimal("30")
+    base_rpc_url: str = "https://sepolia.base.org"
+    base_usdc_address: str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+
     mcp_transport: Literal["stdio", "http"] = "stdio"
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8000
