@@ -1,7 +1,7 @@
 ---
 title: Everyday use
 section: salts-tools
-order: 6
+order: 7
 summary: The salts-tools screen, the commands you will use day to day, and what to do when something stops working.
 ---
 

@@ -58,3 +58,31 @@ export function launchArgs({ cli, execPath, platform }) {
   const npx = path.join(path.dirname(execPath), platform === "win32" ? "npx.cmd" : "npx");
   return [npx, "--yes", "--prefer-offline", "salts-tools"];
 }
+
+/**
+ * The zingo-cli binary the Zcash wallet server will use, or "" when it isn't built yet.
+ *
+ * The server resolves it itself, in this same order, so this only has to answer whether it can:
+ * `ZINGO_CLI_BIN` in the environment, then in the server's own `.env` (what the user edits), then
+ * a `zingo-cli` on PATH. A path that names nothing counts as not built.
+ */
+export function zingoCli({ dir, env = process.env, have }) {
+  for (const named of [env.ZINGO_CLI_BIN, envValue(path.join(dir, ".env"), "ZINGO_CLI_BIN")]) {
+    if (named && existsSync(named)) return named;
+  }
+  return have("zingo-cli") ? "zingo-cli" : "";
+}
+
+/** `name`'s value in a dotenv file: last one wins, comments and surrounding quotes dropped. */
+export function envValue(file, name) {
+  let found = "";
+  try {
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const m = line.match(new RegExp(`^\\s*${name}\\s*=\\s*(.*)$`));
+      if (m) found = m[1].trim().replace(/^(['"])(.*)\1$/, "$2");
+    }
+  } catch {
+    return "";
+  }
+  return found;
+}

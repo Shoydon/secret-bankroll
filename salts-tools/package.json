@@ -2,7 +2,7 @@
   "name": "salts-tools",
   "version": "3.3.1",
   "type": "module",
-  "description": "Run free web search, the matchmaker, the spreadsheet analyst and a payments wallet for a Salts agent on your own computer, behind one token-gated cloudflared tunnel.",
+  "description": "Run free web search, the matchmaker, the spreadsheet analyst, a payments wallet and a Zcash wallet for a Salts agent on your own computer, behind one token-gated cloudflared tunnel.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { installMcp, launchArgs, mcpSource, viaNpx } from "../mcps.mjs";
+import { installMcp, launchArgs, mcpSource, viaNpx, zingoCli } from "../mcps.mjs";
 
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), "salts-mcps-"));
 
@@ -61,4 +61,39 @@ test("a login item starts a clone or install directly, and an npx run through np
     "--prefer-offline",
     "salts-tools",
   ]);
+});
+
+test("zingoCli finds the binary from the environment, then the server's .env, then PATH", () => {
+  const dir = tmp();
+  const built = path.join(dir, "built", "zingo-cli");
+  mkdirSync(path.dirname(built), { recursive: true });
+  writeFileSync(built, "");
+
+  // ZINGO_CLI_BIN in the environment wins.
+  assert.equal(zingoCli({ dir, env: { ZINGO_CLI_BIN: built }, have: () => false }), built);
+
+  // Then the server's own .env, which is what the user edits.
+  writeFileSync(path.join(dir, ".env"), `ZINGO_CHAIN=testnet\nZINGO_CLI_BIN=${built}\n`);
+  assert.equal(zingoCli({ dir, env: {}, have: () => false }), built);
+
+  // Then a zingo-cli on PATH, which the server resolves for itself.
+  assert.equal(zingoCli({ dir: tmp(), env: {}, have: (cmd) => cmd === "zingo-cli" }), "zingo-cli");
+});
+
+test("zingoCli reports nothing when the binary isn't built yet", () => {
+  assert.equal(zingoCli({ dir: tmp(), env: {}, have: () => false }), "");
+});
+
+test("zingoCli ignores a ZINGO_CLI_BIN pointing at a binary that isn't there", () => {
+  const dir = tmp();
+  writeFileSync(path.join(dir, ".env"), `ZINGO_CLI_BIN=${path.join(dir, "gone")}\n`);
+  assert.equal(zingoCli({ dir, env: { ZINGO_CLI_BIN: path.join(dir, "also-gone") }, have: () => false }), "");
+});
+
+test("zingoCli reads a quoted and commented .env the way the server does", () => {
+  const dir = tmp();
+  const built = path.join(dir, "zingo-cli");
+  writeFileSync(built, "");
+  writeFileSync(path.join(dir, ".env"), `# ZINGO_CLI_BIN=/wrong\nZINGO_CLI_BIN="${built}"  \n`);
+  assert.equal(zingoCli({ dir, env: {}, have: () => false }), built);
 });

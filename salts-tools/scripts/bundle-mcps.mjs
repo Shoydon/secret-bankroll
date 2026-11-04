@@ -14,6 +14,7 @@ const out = path.join(root, "mcps");
 const SERVERS = {
   "matchmaker-mcp": ["pyproject.toml", "uv.lock", "src", "prompts"],
   "analyst-mcp": ["pyproject.toml", "uv.lock", "src"],
+  "zcash-wallet-mcp": ["pyproject.toml", "uv.lock", "src"],
 };
 
 const skip = (src) => !/(__pycache__|\.pyc$|\.egg-info|\.DS_Store)/.test(src);

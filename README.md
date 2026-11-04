@@ -1,4 +1,13 @@
-# salts-agent
+# Secret Bankroll
+
+Private WhatsApp agent wallets for all your employees. Manage onchain salaries securely
+without giving away business secrets or creating office politics.
+
+Employees get an easy way to access their salary accounts directly from WhatsApp.
+
+**Demo:** https://x.com/Always_Hungrie_/status/2118043007836635328
+
+## salts-agent
 
 Chat agents that run as Cloudflare Durable Objects — one DO per session, one per agent
 — with a Next.js frontend that shows what every message costs, in tokens and in

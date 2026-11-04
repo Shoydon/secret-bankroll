@@ -9,6 +9,7 @@ the internet through a single cloudflared quick tunnel (free, no account):
 | `matchmaker` | [local-mcps/matchmaker-mcp](../local-mcps/matchmaker-mcp/docs/matchmaker-spec.md): resumes and cover letters in, the best people for a job out, as an MCP server. Files on disk, no Docker. | MCP server `matchmaker`: `<tunnel>/matchmaker/mcp` |
 | `analyst` | [local-mcps/analyst-mcp](../local-mcps/analyst-mcp/README.md): Excel and CSV analysis as an MCP server. It reads workbooks sent in the chat, answers questions about them, previews tables and charts, and returns built workbooks. No Docker. | MCP server `analyst`: `<tunnel>/analyst/mcp` |
 | `coinbase-wallet` | Coinbase Wallet, from Coinbase's [Payments MCP](https://github.com/coinbase/payments-mcp) package: a non-custodial USDC wallet app (Base, Polygon, Solana) plus an MCP server that pays x402 endpoints, such as a Coinbase Business checkout's `x402_url`. It speaks stdio only; salts-tools puts it on loopback HTTP through `stdio-bridge.mjs`. | MCP server `coinbase-wallet`: `<tunnel>/coinbase-wallet/mcp` |
+| `zcash-wallet` | [local-mcps/zcash-wallet-mcp](../local-mcps/zcash-wallet-mcp/README.md): a Zcash light wallet, as an MCP server. Its addresses, its balance, a new shielded address, and sending ZEC — on top of [`zingo-cli`](https://github.com/zingolabs/zingolib), whose keys stay on this computer. No Docker. | MCP server `zcash-wallet`: `<tunnel>/zcash-wallet/mcp` |
 
 The computer is paired with the user's Salts account once, from the browser; that is
 the only thing done there. After that, the user adds agents to the dashboard by ID (or
@@ -50,8 +51,14 @@ It runs on macOS, Linux and Windows.
   When that installer fails (it gives up when the release Coinbase names as latest has no
   zip yet), salts-tools installs it directly: the newest patch release of that version
   that downloads, unzipped into `~/.payments-mcp`, then `npm install` (`coinbase-wallet.mjs`).
-- For `matchmaker` and `analyst` only: [uv](https://docs.astral.sh/uv/). salts-tools runs
-  `uv sync` the first time.
+- For `matchmaker`, `analyst` and `zcash-wallet`: [uv](https://docs.astral.sh/uv/). salts-tools
+  runs `uv sync` the first time.
+- For `zcash-wallet` also: the `zingo-cli` binary, which has no package anywhere and is built from
+  [zingolib](https://github.com/zingolabs/zingolib) (`cargo install cargo-make`, then
+  `makers run-cli --build-only`). That build also produces `nym-proxy` and puts it beside the
+  binary; a wallet that goes online needs it there. Then name the binary in the server's `.env`:
+  `ZINGO_CLI_BIN=/path/to/zingolib/target/release/zingo-cli`. The Tools tab shows the folder, the
+  network, the wallet directory and the per-send limit.
 - Linux only, optional: `secret-tool` (package `libsecret-tools` on Debian/Ubuntu,
   `libsecret` on Fedora/Arch) to keep the secrets in the desktop keyring. See
   [Where things live](#where-things-live).
@@ -62,7 +69,7 @@ install; the others run regardless.
 ## Install
 
 Nothing to install: run it with `npx salts-tools <command>`. npx fetches the package from
-npm the first time. The package carries the matchmaker and analyst sources, which it
+npm the first time. The package carries the matchmaker, analyst and Zcash wallet sources, which it
 installs into `~/.salts-tools/mcps/<name>` (their `.venv`, `.env` and `data` live there and
 are kept when a new version is installed over them). The login item runs it through npx too.
 
@@ -75,7 +82,7 @@ or run `node salts-tools/cli.mjs <command>`. A clone runs the MCP servers in pla
 ```bash
 cd salts-tools
 npm version minor   # a new version makes every npx install copy the MCP servers again
-npm publish         # prepack copies local-mcps/{matchmaker,analyst}-mcp into mcps/
+npm publish         # prepack copies local-mcps/{matchmaker,analyst,zcash-wallet}-mcp into mcps/
 ```
 
 ## First run

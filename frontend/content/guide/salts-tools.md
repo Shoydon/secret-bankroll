@@ -11,7 +11,7 @@ For example, once salts-tools is running you can ask your agent "What is the wea
 
 ## What it can run
 
-salts-tools can run four tools, and you can switch on as many of them as you like:
+salts-tools can run five tools, and you can switch on as many of them as you like:
 
 | Tool | What it gives your agent |
 |---|---|
@@ -19,6 +19,7 @@ salts-tools can run four tools, and you can switch on as many of them as you lik
 | **matchmaker** | Reads resumes and cover letters and finds the best people for a job, for recruiters. See [Add the matchmaker](/guide/salts-tools-matchmaker). |
 | **analyst** | Reads Excel and CSV files sent in the chat, answers questions about them, and builds new sheets with tables and charts. See [Add the spreadsheet analyst](/guide/salts-tools-analyst). |
 | **coinbase-wallet** | Coinbase's non-custodial wallet, which your agent can pay with in USDC on Base, Polygon and Solana, for example a Coinbase Business checkout or a paid API. See [Add Coinbase Wallet](/guide/salts-tools-coinbase-wallet). |
+| **zcash-wallet** | A Zcash wallet of your own, on your computer: your agent shows you an address, tells you your balance, makes shielded addresses and sends ZEC up to a limit you set. See [Add the Zcash wallet](/guide/salts-tools-zcash-wallet). |
 
 One salts-tools can serve several agents at once, and you choose which tools each agent gets in the salts-tools screen in your terminal.
 

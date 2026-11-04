@@ -5,8 +5,8 @@ tile fills in the add-server form with the provider's name, URL and auth type. T
 frontend and the Worker ship no templates of their own: every tile comes from the
 `mcp_catalog` deployment setting.
 
-Shipped entries: Notion (`oauth`), Swiggy (`oauth`), Instamart (`oauth`), Porkbun (`oauth`), GitHub (`headers`), Bonfire (`headers`), and the
-salts-tools servers `matchmaker`, `analyst` and `coinbase-wallet` (`headers`, with a placeholder tunnel URL
+Shipped entries: Notion (`oauth`), Swiggy (`oauth`), Instamart (`oauth`), Porkbun (`oauth`), Bitrefill (`oauth`), GitHub (`headers`), Bonfire (`headers`), and the
+salts-tools servers `matchmaker`, `analyst`, `coinbase-wallet` and `zcash-wallet` (`headers`, with a placeholder tunnel URL
 that salts-tools repoints once the token matches).
 
 ## What an entry looks like

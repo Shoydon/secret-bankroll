@@ -6,7 +6,7 @@
 // tunnel's address and is told apart by path (see gateway.mjs): `<tunnel>/web` is
 // SearXNG, `<tunnel>/matchmaker` the matchmaker MCP server, `<tunnel>/analyst` the
 // spreadsheet analyst MCP server, `<tunnel>/coinbase-wallet` Coinbase's wallet MCP
-// server (Payments MCP).
+// server (Payments MCP) and `<tunnel>/zcash-wallet` the Zcash wallet MCP server (zingo-cli).
 //
 // The computer is paired once from the browser: `start` shows a code and opens the Salts
 // site, where the signed-in user picks the agents it serves. From then on a supervisor
@@ -62,7 +62,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { agentIdFrom, call, openCommand, startPairing, toolsReport, waitForApproval, wantedServices } from "./computer.mjs";
 import { startGateway } from "./gateway.mjs";
-import { installMcp, launchArgs, mcpSource, viaNpx } from "./mcps.mjs";
+import { envValue, installMcp, launchArgs, mcpSource, viaNpx, zingoCli } from "./mcps.mjs";
 import { installCoinbaseWallet } from "./coinbase-wallet.mjs";
 import { caffeinateArgs, codeFingerprint, orphanTunnels, parseProcessList, supervisorsOf } from "./procs.mjs";
 import { connectionStatus, serviceStatus } from "./status.mjs";
@@ -115,6 +115,7 @@ const LOG_FILE = path.join(HOME, "supervisor.log");
 const MATCHMAKER_LOG = path.join(HOME, "matchmaker.log");
 const ANALYST_LOG = path.join(HOME, "analyst.log");
 const WALLET_LOG = path.join(HOME, "coinbase-wallet.log");
+const ZCASH_LOG = path.join(HOME, "zcash-wallet.log");
 /** `salts-tools restart` drops this file; the supervisor picks it up (no SIGUSR1 on Windows). */
 const RESTART_FILE = path.join(HOME, "restart.request");
 /** `start`/`stop` of one service drop this file: the supervisor re-reads which are on. */
@@ -174,6 +175,7 @@ const WEB_PORT = 8180;
 const MATCHMAKER_PORT = 8280;
 const ANALYST_PORT = 8380;
 const WALLET_PORT = 8480;
+const ZCASH_PORT = 8580;
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -403,6 +405,10 @@ function toolMissing(name) {
     if (run("docker", ["compose", "version"]).status !== 0) return "update Docker (`docker compose` isn't available)";
   }
   if (SERVICES[name].uv && !have("uv")) return "install uv (https://docs.astral.sh/uv/)";
+  // zingo-cli has no package anywhere: it is built from zingolib, which also bundles nym-proxy beside it.
+  if (SERVICES[name].zingo && !zingoCli({ dir: ZCASH_DIR, have })) {
+    return `build zingo-cli (https://github.com/zingolabs/zingolib: \`makers run-cli --build-only\`) and set ZINGO_CLI_BIN in ${path.join(ZCASH_DIR, ".env")}`;
+  }
   return "";
 }
 
@@ -502,8 +508,10 @@ const webPort = () => publishedPort(WEB_DIR, WEB_PROJECT, "caddy", 8081, webEnv(
 const MCP_ROOT = path.join(os.homedir(), ".salts-tools", "mcps");
 const MATCHMAKER_SRC = mcpSource(here, "matchmaker-mcp", MCP_ROOT);
 const ANALYST_SRC = mcpSource(here, "analyst-mcp", MCP_ROOT);
+const ZCASH_SRC = mcpSource(here, "zcash-wallet-mcp", MCP_ROOT);
 const MATCHMAKER_DIR = MATCHMAKER_SRC.dir;
 const ANALYST_DIR = ANALYST_SRC.dir;
+const ZCASH_DIR = ZCASH_SRC.dir;
 
 /**
  * Make `src` ready to run as `bin`: install the packaged copy when this version has not
@@ -523,6 +531,10 @@ const ANALYST_BIN = IS_WIN
 const MATCHMAKER_BIN = IS_WIN
   ? path.join(MATCHMAKER_DIR, ".venv", "Scripts", "matchmaker-mcp.exe")
   : path.join(MATCHMAKER_DIR, ".venv", "bin", "matchmaker-mcp");
+
+const ZCASH_BIN = IS_WIN
+  ? path.join(ZCASH_DIR, ".venv", "Scripts", "zcash-wallet-mcp.exe")
+  : path.join(ZCASH_DIR, ".venv", "bin", "zcash-wallet-mcp");
 
 /**
  * The headers the matchmaker's paid tools need on the agent's `matchmaker` MCP server,
@@ -707,6 +719,60 @@ const SERVICES = {
       return { status: 0, stdout: "", stderr: "" };
     },
     reached: (tunnel) => `${tunnel}/analyst/mcp`,
+  },
+
+  "zcash-wallet": {
+    label: "Zcash wallet",
+    kind: "mcp",
+    needs: ["cap_mcp"],
+    about: "a Zcash light wallet on this computer: addresses, balance and sending ZEC (zingo-cli, uv, no Docker)",
+    log: ZCASH_LOG,
+    docker: false,
+    uv: true,
+    zingo: true,
+    child: null,
+    healthy: (port) => ok(`http://127.0.0.1:${port}/healthz`),
+    async up(token) {
+      readyMcp("zcash-wallet", ZCASH_SRC, ZCASH_BIN);
+      this.stop();
+      const port = await portFrom(readState().svc?.["zcash-wallet"]?.port, ZCASH_PORT);
+      const out = openSync(ZCASH_LOG, "a");
+      // Its own .env still applies (ZINGO_CLI_BIN, ZINGO_CHAIN, MAX_SEND_ZEC, …); these win over it.
+      const child = spawn(ZCASH_BIN, [], {
+        cwd: ZCASH_DIR,
+        stdio: ["ignore", out, out],
+        windowsHide: true,
+        env: {
+          ...process.env,
+          MCP_TRANSPORT: "http",
+          MCP_HOST: "127.0.0.1",
+          MCP_PORT: String(port),
+          MCP_AUTH_TOKEN: token,
+        },
+      });
+      this.child = child;
+      child.on("exit", (code, signal) => {
+        if (this.child === child) this.child = null;
+        log(`zcash-wallet exited (${signal ?? code})`);
+      });
+      writeSvc("zcash-wallet", { pid: child.pid });
+      log(`zcash-wallet started (pid ${child.pid}) on port ${port}; log at ${ZCASH_LOG}`);
+      if (!(await waitUntil(() => this.healthy(port), 60))) {
+        throw new Error(`Zcash wallet didn't respond on port ${port}. Details are in ${ZCASH_LOG}`);
+      }
+      return port;
+    },
+    stop() {
+      if (this.child) this.child.kill("SIGTERM");
+      this.child = null;
+      const stale = readState().svc?.["zcash-wallet"]?.pid;
+      if (isProcess(stale, /zcash-wallet-mcp/i)) process.kill(stale, "SIGTERM");
+    },
+    down() {
+      this.stop();
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    reached: (tunnel) => `${tunnel}/zcash-wallet/mcp`,
   },
 
   "coinbase-wallet": {
@@ -1169,6 +1235,7 @@ async function stopSupervisor() {
   if (isProcess(svc?.matchmaker?.pid, /recruiter-mcp/i)) process.kill(svc.matchmaker.pid, "SIGTERM");
   if (isProcess(svc?.analyst?.pid, /analyst-mcp/i)) process.kill(svc.analyst.pid, "SIGTERM");
   if (isProcess(svc?.["coinbase-wallet"]?.pid, /payments-mcp/i)) process.kill(svc["coinbase-wallet"].pid, "SIGTERM");
+  if (isProcess(svc?.["zcash-wallet"]?.pid, /zcash-wallet-mcp/i)) process.kill(svc["zcash-wallet"].pid, "SIGTERM");
   return Boolean(pid || strays);
 }
 
@@ -1754,10 +1821,29 @@ function serviceFiles(name) {
       ["wallet app", WALLET_DIR, "Ask the agent to show the wallet to sign in, add funds and set spend limits.", WALLET_DIR],
     ];
   }
+  if (name === "zcash-wallet") {
+    const env = path.join(ZCASH_DIR, ".env");
+    const chain = zcashEnv("ZINGO_CHAIN", "mainnet");
+    const wallet = zcashWallet(chain);
+    const backup = `zingo-cli --data-dir ${wallet} --chain ${chain} recovery_info`;
+    return [
+      ["wallet", wallet, `Back up its seed phrase yourself; no tool prints it. Run: ${backup}`, wallet],
+      ["network", chain, `Set ZINGO_CHAIN in ${env}. Each network keeps its own wallet, so switching opens a different one.`],
+      ["send limit", `${zcashEnv("MAX_SEND_ZEC", "1")} ZEC per send`, `Set MAX_SEND_ZEC in ${env}`],
+    ];
+  }
   return [];
 }
 
 const ANALYST_INBOX = path.join(ANALYST_DIR, "data", "inbox");
+
+/**
+ * What the Zcash wallet's own .env says. Read on every look, not once at startup: the Tools tab is
+ * where the user is told to edit that file, so the card has to show what is in it now.
+ */
+const zcashEnv = (name, fallback) => envValue(path.join(ZCASH_DIR, ".env"), name) || fallback;
+// DATA_DIR is read by a server whose cwd is its own folder, so a relative one resolves against that.
+const zcashWallet = (chain) => path.resolve(ZCASH_DIR, zcashEnv("DATA_DIR", "./data"), "wallets", chain);
 
 /** A row whose `enter` copies `text`. */
 const copyRow = (cells, text, note) => ({
