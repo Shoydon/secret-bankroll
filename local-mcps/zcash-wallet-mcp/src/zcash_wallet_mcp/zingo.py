@@ -2,8 +2,10 @@
 
 import json
 import logging
+import os
 import re
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +14,9 @@ from .config import Settings
 from .errors import ToolFailure
 
 log = logging.getLogger("zcash_wallet_mcp")
+
+#: The wallet zingo-cli keeps in its data directory. Its absence means "no wallet yet".
+WALLET_FILE = "zingo-wallet.dat"
 
 #: `confirmed_orchard_balance: 1_234_567_890` or `… : no view capability`, as `balance` prints them.
 BALANCE_LINE = re.compile(r"^\s*(\w+_balance)\s*:\s*(.+?)\s*$", re.MULTILINE)
@@ -61,9 +66,10 @@ class Zingo:
                 "and set ZINGO_CLI_BIN to the binary.",
             )
         self.wallet_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_wallet()
         log.info("zingo-cli %s", " ".join(argv[1:]))
         try:
-            done = subprocess.run(argv, capture_output=True, text=True, timeout=self.timeout)
+            done = _run(argv, self.timeout)
         except subprocess.TimeoutExpired:
             raise ToolFailure(
                 "zingo_timeout", f"zingo-cli took longer than {self.timeout}s on `{command}` and was stopped."
@@ -85,9 +91,64 @@ class Zingo:
                 pass
         raise ToolFailure("zingo_unreadable", f"zingo-cli's `{command}` output wasn't JSON: {_snippet(out)}")
 
+    def _ensure_wallet(self) -> None:
+        """Make the wallet, once, in a session that can reach the chain.
+
+        zingo-cli creates one on its first run in a data directory, and sets its birthday to
+        the chain height it sees. A session created `--offline` sees none, so it falls back to
+        a checkpoint compiled into the binary — hundreds of thousands of blocks back — and
+        every sync afterwards grinds through that whole gap to find nothing. Spending one
+        online call here is what keeps the first real sync seconds rather than tens of minutes.
+        """
+        if (self.wallet_dir / WALLET_FILE).exists():
+            return
+        argv = [str(self.cli), "--data-dir", str(self.wallet_dir), "--chain", self.chain]
+        argv += ["--server", self.server] if self.server else ["--online"]
+        # --nosync: the point is the birthday zingo-cli stamps on a new wallet, not its contents.
+        argv += ["--nosync", "addresses"]
+        try:
+            done = _run(argv, self.timeout)
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log.warning("couldn't create the wallet online (%s); zingo-cli will make one offline", e)
+            return
+        if done.returncode != 0:
+            # Offline, or no indexer: let the command the agent asked for make the wallet
+            # instead. It still works, it just starts life far behind the chain.
+            log.warning("couldn't create the wallet online: %s", _snippet(done.stderr or done.stdout))
+
     def _resolved(self) -> bool:
         parts = Path(self.cli).parts
         return bool(shutil.which(str(self.cli))) if len(parts) == 1 else Path(self.cli).is_file()
+
+
+def _run(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """zingo-cli, in a process group of its own, killed whole if it runs over `timeout`.
+
+    An online session spawns nym-proxy beside it. Killing only zingo-cli leaves the proxy
+    running, so every call that timed out would leak one; the group is what has to die.
+    """
+    # Windows has no process groups to signal: a new group plus taskkill /T is the equivalent.
+    group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **group)
+    try:
+        out, err = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(child)
+        child.communicate()
+        raise
+    return subprocess.CompletedProcess(argv, child.returncode, out, err)
+
+
+def _kill_group(child: subprocess.Popen) -> None:
+    """End `child` and everything it started. Never raises: the run already failed."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(child.pid)], capture_output=True, timeout=30)
+        else:
+            os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("couldn't stop the timed-out zingo-cli (pid %s): %s", child.pid, e)
+        child.kill()
 
 
 def parse_balance(out: str) -> dict[str, int | None]:

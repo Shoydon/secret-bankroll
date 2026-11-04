@@ -102,10 +102,25 @@ async def test_wallet_balance_calls_a_pool_it_cannot_view_unknown_not_zero(zingo
     assert "0" not in transparent.replace("transparent", "")
 
 
-async def test_wallet_balance_syncs_before_it_answers(zingo, argv_log):
+async def test_wallet_balance_reads_the_wallet_without_waiting_for_the_network(zingo, argv_log):
+    """`balance` is a local command: it adds up the notes already in the wallet. Putting it
+    on the network makes the user wait minutes on a sync to be told a number already on disk."""
     zingo(f"cat <<'B'\n{BALANCE}\nB")
     await server.wallet_balance()
-    assert "--waitsync" in argv_of(argv_log)
+    assert "--offline" in argv_of(argv_log)
+    assert "--waitsync" not in argv_of(argv_log)
+
+
+async def test_wallet_balance_says_the_number_is_as_of_the_last_sync(zingo):
+    zingo(f"cat <<'B'\n{BALANCE}\nB")
+    assert "last sync" in ok(await server.wallet_balance()).lower()
+
+
+async def test_wallet_balance_syncs_first_when_asked_to(zingo, argv_log):
+    zingo(f"cat <<'B'\n{BALANCE}\nB")
+    await server.wallet_balance(sync=True)
+    argv = argv_of(argv_log)
+    assert "--waitsync" in argv and "--offline" not in argv
 
 
 async def test_wallet_balance_reports_an_offline_refusal_as_an_error(zingo):

@@ -143,17 +143,31 @@ def wallet_address() -> CallToolResult:
     return _result("\n\n".join(parts))
 
 
+Sync = Annotated[
+    bool,
+    Field(
+        description=(
+            "Fetch new blocks before answering. Minutes, not seconds — only worth it when the user is waiting "
+            "on a payment that has just been sent to them."
+        )
+    ),
+]
+
+
 @mcp.tool(
     description=(
-        "The Zcash wallet's balance on this computer, per pool and in total, in ZEC. Syncs with the chain first, "
-        "so it can take a minute. A pool the wallet holds no viewing key for reads as unknown, not zero."
+        "The Zcash wallet's balance on this computer, per pool and in total, in ZEC. Answers from the wallet on "
+        "disk, as of its last sync, in about a second. Pass sync=true to fetch new blocks first, which takes "
+        "minutes. A pool the wallet holds no viewing key for reads as unknown, not zero."
     ),
     annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False),
 )
 @tool_handler("wallet_balance")
-def wallet_balance() -> CallToolResult:
+def wallet_balance(sync: Sync = False) -> CallToolResult:
     cli = _cli()
-    pools = parse_balance(cli.run("balance", network=True))
+    # `balance` adds up the notes already in the wallet, so it needs no network. Only
+    # bringing new ones in does, and that is minutes: never make a read wait on it.
+    pools = parse_balance(cli.run("balance", network=sync))
 
     def show(key: str) -> str:
         value = pools.get(key)
@@ -173,6 +187,12 @@ def wallet_balance() -> CallToolResult:
     ]
     if unviewable:
         parts.append(f"Not counted in the total: {', '.join(unviewable)} (this wallet has no viewing key for it).")
+    parts.append(
+        "Synced with the chain just now."
+        if sync
+        else "This is what the wallet holds as of its last sync. A payment that arrived since then is not in it "
+        "yet — call wallet_balance(sync=true) to fetch new blocks, which takes a few minutes."
+    )
     return _result("\n\n".join(parts))
 
 

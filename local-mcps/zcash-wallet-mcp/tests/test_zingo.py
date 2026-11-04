@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -161,3 +162,21 @@ def test_json_output_round_trips_through_run_json(zingo):
     payload = {"account": 0, "address_index": 3, "encoded_address": "utest1xyz"}
     zingo(f"echo '{json.dumps(payload)}'")
     assert cli().run_json("new_address", "oz", network=False) == payload
+
+
+def test_a_timeout_kills_the_processes_zingo_cli_started_too(zingo, tmp_path):
+    """zingo-cli spawns nym-proxy for an online session. Killing only zingo-cli leaves the
+    proxy running, and one is left behind by every call that times out."""
+    marker = tmp_path / "grandchild.alive"
+    # A stand-in for nym-proxy: outlives its parent and says so while it runs.
+    zingo(f"""
+      ( while true; do echo alive > "{marker}"; sleep 0.1; done ) &
+      sleep 30
+    """)
+    with pytest.raises(ToolFailure) as e:
+        cli(zingo_timeout_seconds=1).run("balance", network=True)
+    assert e.value.code == "zingo_timeout"
+
+    marker.unlink(missing_ok=True)
+    time.sleep(0.5)
+    assert not marker.exists(), "a process zingo-cli started is still running after the timeout"
